@@ -38,6 +38,11 @@ class PdfViewModel(
 ) : AndroidViewModel(application) {
 
     companion object {
+        // Keep these values in sync with the fit-mode constants in viewer/js/index.js.
+        const val FIT_MODE_FREE = 0
+        const val FIT_MODE_PAGE = 1
+        const val FIT_MODE_WIDTH = 2
+
         private const val STATE_URI: String = "uri"
         private const val STATE_PAGE: String = "page"
         private const val STATE_DOCUMENT_ORIENTATION_DEGREES: String = "documentOrientationDegrees"
@@ -59,7 +64,7 @@ class PdfViewModel(
         savedStateHandle[STATE_DOCUMENT_ORIENTATION_DEGREES] = value
     }
 
-    val pageFitMode: StateFlow<Int> = savedStateHandle.getStateFlow(STATE_PAGE_FIT_MODE, 2)
+    val pageFitMode: StateFlow<Int> = savedStateHandle.getStateFlow(STATE_PAGE_FIT_MODE, FIT_MODE_WIDTH)
     fun setPageFitMode(value: Int) { savedStateHandle[STATE_PAGE_FIT_MODE] = value }
 
     val continuousMode: StateFlow<Boolean> =
@@ -297,7 +302,7 @@ class PdfViewModel(
         _numPages.value = 0
         _zoomRatio.value = 0f
         setDocumentOrientationDegrees(0)
-        setPageFitMode(2)
+        setPageFitMode(FIT_MODE_WIDTH)
         setContinuousMode(true)
         encryptedDocumentPassword = ""
         clearOutline()

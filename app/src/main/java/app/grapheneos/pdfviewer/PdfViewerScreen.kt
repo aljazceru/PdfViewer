@@ -122,6 +122,9 @@ import app.grapheneos.pdfviewer.outline.OutlineScreen
 import app.grapheneos.pdfviewer.properties.DocumentProperty
 import app.grapheneos.pdfviewer.ui.darkTopAppBarColors
 import app.grapheneos.pdfviewer.viewModel.PdfViewModel
+import app.grapheneos.pdfviewer.viewModel.PdfViewModel.Companion.FIT_MODE_FREE
+import app.grapheneos.pdfviewer.viewModel.PdfViewModel.Companion.FIT_MODE_PAGE
+import app.grapheneos.pdfviewer.viewModel.PdfViewModel.Companion.FIT_MODE_WIDTH
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -136,6 +139,11 @@ import kotlin.math.roundToInt
 
 private const val TAG = "PdfViewerScreen"
 private const val MIN_WEBVIEW_RELEASE = 133
+// Keep these values in sync with the render-reason constants in viewer/js/index.js.
+private const val RENDER_RELAYOUT = 0
+private const val RENDER_PINCH_END = 1
+private const val RENDER_PINCH_UPDATE = 2
+private const val RENDER_MENU_ZOOM = 3
 private val ZOOM_PRESETS = intArrayOf(25, 50, 75, 100, 125, 150, 200, 300, 500, 750, 1000)
 
 private fun nextZoomPreset(ratio: Float): Float? {
@@ -349,11 +357,11 @@ fun PdfViewerScreen(
         fun dispatchPendingZoomRender() {
             if (zoomRenderInFlight || !zoomRenderPending) return
 
-            val zoom = if (zoomRenderEndPending) 1 else 2
+            val renderReason = if (zoomRenderEndPending) RENDER_PINCH_END else RENDER_PINCH_UPDATE
             zoomRenderPending = false
             zoomRenderEndPending = false
             zoomRenderInFlight = true
-            wv.evaluateJavascript("onRenderPage($zoom)") {
+            wv.evaluateJavascript("onRenderPage($renderReason)") {
                 zoomRenderInFlight = false
                 dispatchPendingZoomRender()
             }
@@ -401,7 +409,7 @@ fun PdfViewerScreen(
             }
 
             override fun onZoom(scaleFactor: Float, focusX: Float, focusY: Float) {
-                viewModel.setPageFitMode(0)
+                viewModel.setPageFitMode(FIT_MODE_FREE)
                 viewModel.setZoomRatio(
                     (viewModel.zoomRatio.value * scaleFactor)
                         .coerceIn(MIN_ZOOM_RATIO, MAX_ZOOM_RATIO)
@@ -552,9 +560,9 @@ fun PdfViewerScreen(
                 onFirst = { jumpToPage(viewModel, webView, 1) },
                 onLast = { jumpToPage(viewModel, webView, numPages) },
                 onJumpToPage = { showJumpToPage = true },
-                onFitFree = { setPageFitMode(viewModel, webView, 0) },
-                onFitPage = { setPageFitMode(viewModel, webView, 1) },
-                onFitWidth = { setPageFitMode(viewModel, webView, 2) },
+                onFitFree = { setPageFitMode(viewModel, webView, FIT_MODE_FREE) },
+                onFitPage = { setPageFitMode(viewModel, webView, FIT_MODE_PAGE) },
+                onFitWidth = { setPageFitMode(viewModel, webView, FIT_MODE_WIDTH) },
                 onContinuousModeChange = {
                     setContinuousMode(viewModel, webView, !continuousMode)
                 },
@@ -799,7 +807,7 @@ internal fun jumpToPage(viewModel: PdfViewModel, webView: WebView?, selectedPage
     val num = viewModel.numPages.value
     if (selectedPage in 1..num && viewModel.page.value != selectedPage) {
         viewModel.setPage(selectedPage)
-        webView.evaluateJavascript("onRenderPage(0)", null)
+        webView.evaluateJavascript("onRenderPage($RENDER_RELAYOUT)", null)
         viewModel.showPageIndicator()
     }
 }
@@ -808,7 +816,7 @@ private fun setPageFitMode(viewModel: PdfViewModel, webView: WebView?, mode: Int
     webView ?: return
     viewModel.setPageFitMode(mode)
     viewModel.setZoomRatio(0f)
-    webView.evaluateJavascript("onRenderPage(0)", null)
+    webView.evaluateJavascript("onRenderPage($RENDER_RELAYOUT)", null)
 }
 
 private fun setContinuousMode(viewModel: PdfViewModel, webView: WebView?, enabled: Boolean) {
@@ -822,14 +830,14 @@ private fun rotateDocument(viewModel: PdfViewModel, webView: WebView?, offset: I
     var degrees = (viewModel.documentOrientationDegrees.value + offset) % 360
     if (degrees < 0) degrees += 360
     viewModel.setDocumentOrientationDegrees(degrees)
-    webView.evaluateJavascript("onRenderPage(0)", null)
+    webView.evaluateJavascript("onRenderPage($RENDER_RELAYOUT)", null)
 }
 
 private fun zoomDocument(viewModel: PdfViewModel, webView: WebView?, ratio: Float) {
     webView ?: return
-    viewModel.setPageFitMode(0)
+    viewModel.setPageFitMode(FIT_MODE_FREE)
     viewModel.setZoomRatio(ratio.coerceIn(MIN_ZOOM_RATIO, MAX_ZOOM_RATIO))
-    webView.evaluateJavascript("onRenderPage(3)", null)
+    webView.evaluateJavascript("onRenderPage($RENDER_MENU_ZOOM)", null)
 }
 
 private fun shareDocument(context: Context, viewModel: PdfViewModel) {
@@ -969,7 +977,7 @@ private fun PdfTopAppBar(
                             onClick = { onMenuToggle(false); onFitFree() },
                             enabled = enabled,
                             leadingIcon = {
-                                if (pageFitMode == 0) {
+                                if (pageFitMode == FIT_MODE_FREE) {
                                     Icon(Icons.Default.Check, contentDescription = null)
                                 }
                             }
@@ -979,7 +987,7 @@ private fun PdfTopAppBar(
                             onClick = { onMenuToggle(false); onFitPage() },
                             enabled = enabled,
                             leadingIcon = {
-                                if (pageFitMode == 1) {
+                                if (pageFitMode == FIT_MODE_PAGE) {
                                     Icon(Icons.Default.Check, contentDescription = null)
                                 }
                             }
@@ -989,7 +997,7 @@ private fun PdfTopAppBar(
                             onClick = { onMenuToggle(false); onFitWidth() },
                             enabled = enabled,
                             leadingIcon = {
-                                if (pageFitMode == 2) {
+                                if (pageFitMode == FIT_MODE_WIDTH) {
                                     Icon(Icons.Default.Check, contentDescription = null)
                                 }
                             }

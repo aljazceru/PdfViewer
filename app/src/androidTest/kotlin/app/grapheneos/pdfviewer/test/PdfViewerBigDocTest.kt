@@ -200,7 +200,7 @@ class PdfViewerBigDocTest {
                 robot.getPageFitMode(scenario) == 0
             }
 
-            // fit width -> free again (review P2: must not reuse stale ratio / jump to MIN)
+            // fit width -> free again (must not reuse stale ratio / jump to MIN)
             robot.clickFitWidth()
             PdfViewerTestUtils.pollUntil(timeout = 8_000, description = { "not fit-width" }) {
                 robot.getPageFitMode(scenario) == 2

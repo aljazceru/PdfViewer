@@ -16,11 +16,20 @@ GlobalWorkerOptions.workerSrc = "/viewer/js/worker.js";
 // the viewport and cleared when far away, so memory stays bounded on large
 // documents.
 //
-// CSP note (style-src 'self', no unsafe-inline): every dynamic style is set
-// via an IDL property write (el.style.x = ...) or a CSS custom property
-// (setProperty). We never set the style attribute directly, never assign cssText,
-// never create a style element, and never use an inline style attribute in HTML
-// — those are exactly what CSP blocks here. See check-csp.mjs which enforces it.
+// Set dynamic styles through individual DOM style properties to comply with CSP.
+
+// Keep these values in sync with PdfViewModel's page-fit constants.
+const FitMode = Object.freeze({
+    FREE: 0,
+    PAGE: 1,
+    WIDTH: 2,
+});
+
+// Keep these values in sync with PdfViewerScreen's render-reason constants.
+const RENDER_RELAYOUT = 0;
+const RENDER_PINCH_END = 1;
+const RENDER_PINCH_UPDATE = 2;
+const RENDER_MENU_ZOOM = 3;
 
 let pdfDoc = null;
 let outlineAbort = new AbortController();
@@ -63,7 +72,6 @@ function clampZoom(value, layout = null) {
 }
 
 function fitMode() {
-    // 0 = free zoom, 1 = fit page, 2 = fit width
     return channel.getPageFitMode();
 }
 
@@ -112,13 +120,13 @@ function totalRotation(pdfPage) {
 // Zoom ratio for a page under the active fit mode, or the free-zoom ratio.
 function pageZoom(pdfPage, layout = null) {
     const m = layout ? layout.mode : fitMode();
-    if (m !== 0 || zoomRatio === 0) {
+    if (m !== FitMode.FREE || zoomRatio === 0) {
         const vp1 = pdfPage.getViewport({scale: 1, rotation: totalRotation(pdfPage)});
         const a = availSize(layout);
         const wZoom = a.width / vp1.width;
         const hZoom = a.height / vp1.height;
-        // fit width (2) fills width; fit page (1) and free-default both fit page.
-        const z = (m === 2) ? wZoom : Math.min(wZoom, hZoom);
+        // Fit width fills the width; fit page and the free-zoom default fit the page.
+        const z = (m === FitMode.WIDTH) ? wZoom : Math.min(wZoom, hZoom);
         return clampZoom(z, layout);
     }
     return clampZoom(zoomRatio, layout);
@@ -191,7 +199,7 @@ function renderPageContent(p, layout = null) {
     // Cancel any in-flight render so we restart at the current viewport: during
     // a multi-event pinch the viewport changes on every event, and an unchecked
     // in-flight task would otherwise complete with a stale viewport (stretched
-    // bitmap, misaligned text) — see review P1.
+    // bitmap, misaligned text).
     if (p.task) {
         try {
             p.task.cancel();
@@ -450,7 +458,7 @@ function updateCurrentPage() {
     }
     const layout = readLayout();
     const m = layout.mode;
-    if (m === 0 && zoomRatio !== 0) {
+    if (m === FitMode.FREE && zoomRatio !== 0) {
         // Free zoom: the ViewModel zoom (driven by the pinch handler) is
         // authoritative — reflect it on the container, never overwrite it.
         container.style.setProperty("--scale-factor", zoomRatio.toString());
@@ -515,20 +523,20 @@ globalThis.scrollToPage = function (pageNumber) {
     }
 };
 
-// Driven from the Java side (former single-page render entry point).
-//   zoom: 0 = full re-layout, 1 = pinch end, 2 = pinching, 3 = menu zoom
-globalThis.onRenderPage = function (zoom) {
+// Driven from the Android side.
+globalThis.onRenderPage = function (renderReason = RENDER_RELAYOUT) {
     orientationDegrees = channel.getDocumentOrientationDegrees();
 
-    if (zoom === 1 || zoom === 2 || zoom === 3) {
+    if (renderReason === RENDER_PINCH_END || renderReason === RENDER_PINCH_UPDATE ||
+        renderReason === RENDER_MENU_ZOOM) {
         // Adopt the new free-zoom ratio and re-render visible pages while
         // preserving the relevant focus point.
         const dpr = globalThis.devicePixelRatio;
         // Pinch zoom keeps the touch focus; menu zoom keeps the viewport center.
-        const viewportFocusX = zoom === 3
+        const viewportFocusX = renderReason === RENDER_MENU_ZOOM
             ? globalThis.innerWidth / 2
             : channel.getZoomFocusX() / dpr;
-        const viewportFocusY = zoom === 3
+        const viewportFocusY = renderReason === RENDER_MENU_ZOOM
             ? globalThis.innerHeight / 2
             : channel.getZoomFocusY() / dpr;
         // Preserve a point on the actual focused canvas. Measuring it before
@@ -557,10 +565,10 @@ globalThis.onRenderPage = function (zoom) {
         return;
     }
 
-    // zoom === 0: a fit-mode / orientation / page change.
-    if (fitMode() !== 0) {
-        // a fit mode owns the zoom now; drop stale free-zoom state so that
-        // re-entering Free zoom re-derives instead of reusing it (review P2).
+    // RENDER_RELAYOUT handles fit-mode, orientation, and page changes.
+    if (fitMode() !== FitMode.FREE) {
+        // An active fit mode owns the zoom. Clear the cached free-zoom ratio
+        // so returning to free zoom derives a fresh ratio.
         zoomRatio = 0;
     }
     // Read the Java-side target before geometry changes can make the scroll
@@ -687,7 +695,7 @@ globalThis.loadDocument = function () {
 
         // Apply the saved document rotation before sizing any page, otherwise
         // every wrapper is built at rotation 0 and only nearby pages get
-        // corrected later (review P2 rotation).
+        // corrected later.
         orientationDegrees = channel.getDocumentOrientationDegrees();
 
         // Reset continuous-scroll state — loadDocument runs again when opening a
